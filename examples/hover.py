@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 # -*- coding: utf-8 -*-
 #
 #     ||          ____  _ __
@@ -44,13 +46,56 @@ from cfclient.utils.logconfigreader import LogConfig
 import logging
 logging.basicConfig(level=logging.ERROR)
 
-class HoverExample:
-    
+import SimpleCV
+
+class HoverExample:    
     def __init__(self, link_uri):
+        """ global loop vars """
+        self._exit = False
+
+        """ camera setup """
+        cam_ip = raw_input("Specify camera; enter for webcam, or ip of network :\n")
+        if cam_ip is '':
+            self._cam = SimpleCV.Camera()
+        elif '.' not in cam_ip:
+            self._cam = SimpleCV.JpegStreamCamera("http://192.168.1." + cam_ip + ":8080/video")
+        else:
+            self._cam = SimpleCV.JpegStreamCamera("http://" + cam_ip + ":8080/video")
+
+        self._img_floor_accepted = False
+        self._img_ceiling_accepted = False
+        self._img_height_accepted = False
+        self._img_floor_y = 0
+        self._img_ceiling_y = 0
+        self._img_max_height = 1.82 # six feet in meters
+        self._img_size = (800,600)
+        self._img_color = SimpleCV.Color.RED
+        self._img_blob_min = 10
+        self._img_blob_max = 10000
+        self._img_log_path = '/tmp/hover.img.log'
+        
+        # start the vision loop -- will need to initialize though
+        Thread(target=self._vision_loop).start()
+        
+        raw_input("Acquiring floor reading.  Press any key to accept\n")
+        self._img_floor_accepted = True
+        self._img_floor_y = self._img_pos.y
+        
+        raw_input("Acquiring ceiling reading.  Press any key to accept\n")
+        self._img_ceiling_accepted = True
+        self._img_ceiling_y = self._img_pos.y
+        
+        height = raw_input("Enter the height from floor to ceiling; enter to assume {0}\n"\
+                .format(self._img_max_height))
+        if height is not '':
+            self._img_max_height = height
+        self._img_height_accepted = True
+
+        raw_input("Press any key to begin Crazyflie initiation code.")
+
         """ Initialize and run the example with the specified link_uri """
 
         self._cf = Crazyflie()
-
         self._cf.connected.add_callback(self._connected)
         self._cf.disconnected.add_callback(self._disconnected)
         self._cf.connection_failed.add_callback(self._connection_failed)
@@ -62,7 +107,6 @@ class HoverExample:
 
         self._asl = 0
         self._alt_accepted = False
-        self._exit = False
 
         print "Connecting to %s" % link_uri
         
@@ -112,6 +156,43 @@ class HoverExample:
     def _disconnected(self, link_uri):
         """Callback when the Crazyflie is disconnected (called in all cases)"""
         print "Disconnected from %s" % link_uri
+
+    def _vision_loop(self):
+        log = open(self._img_log_path, 'w', 0)
+        while not self._exit:
+            img = self._cam.getImage()
+            
+            # image adjustments
+            if self._img_size:
+                img = img.resize(self._img_size[0], self._img_size[1])
+
+            # blob search
+            color = img - img.colorDistance(self._img_color)
+            blobs = color.findBlobs(-1, self._img_blob_min, self._img_blob_max)
+            
+            # blob draw
+            if blobs is not None:
+                self._img_pos = blobs[-1]
+                roiLayer = SimpleCV.DrawingLayer((img.width, img.height))
+                for blob in blobs:
+                    blob.draw(layer=roiLayer)
+                roiLayer.circle((self._img_pos.x,self._img_pos.y), 50, SimpleCV.Color.RED, 2)
+                img.addDrawingLayer(roiLayer)
+                blobs.draw(SimpleCV.Color.GREEN, 1)
+            img = img.applyLayers()
+            img.show()
+
+            # height determination
+            if self._img_floor_accepted and\
+                self._img_ceiling_accepted and\
+                self._img_height_accepted:
+                dy = self._img_pos.y - self._img_floor_y
+                ypct = dy / (self._img_ceiling_y - self._img_floor_y)
+                self._img_height = ypct * self._img_max_height
+                log.write("{x},{y},{h}\n"\
+                   .format(x=self._img_pos.x,y=self._img_pos.y,h=self._img_height))
+
+        log.close()
 
     def _hover_loop(self):
         # aquire asl_start over first 3 seconds -- 30 samples
@@ -189,12 +270,15 @@ class HoverExample:
 if __name__ == '__main__':
     # Initialize the low-level drivers (don't list the debug drivers)
     cflib.crtp.init_drivers(enable_debug_driver=False)
+
     # Scan for Crazyflies and use the first one found
     print "Scanning interfaces for Crazyflies..."
     available = cflib.crtp.scan_interfaces()
     print "Crazyflies found:"
     for i in available:
         print i[0]
+
+    le = HoverExample(None)
 
     if len(available) > 0:
         le = HoverExample(available[0][0])
