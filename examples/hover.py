@@ -62,36 +62,23 @@ class HoverExample:
         else:
             self._cam = SimpleCV.JpegStreamCamera("http://" + cam_ip + ":8080/video")
 
-        self._img_floor_accepted = False
-        self._img_ceiling_accepted = False
-        self._img_height_accepted = False
-        self._img_floor_y = 0
-        self._img_ceiling_y = 0
-        self._img_max_height = 1.82 # six feet in meters
         self._img_size = (800,600)
+        self._img_set_point_accepted = False
+        self._img_set_point = 0
         self._img_color = SimpleCV.Color.RED
         self._img_blob_min = 10
-        self._img_blob_max = 10000
+        self._img_blob_max = 1000
         self._img_log_path = '/tmp/hover.img.log'
         
         # start the vision loop -- will need to initialize though
-        Thread(target=self._vision_loop).start()
-        
-        raw_input("Acquiring floor reading.  Press any key to accept\n")
-        self._img_floor_accepted = True
-        self._img_floor_y = self._img_pos.y
-        
-        raw_input("Acquiring ceiling reading.  Press any key to accept\n")
-        self._img_ceiling_accepted = True
-        self._img_ceiling_y = self._img_pos.y
-        
-        height = raw_input("Enter the height from floor to ceiling; enter to assume {0}\n"\
-                .format(self._img_max_height))
-        if height is not '':
-            self._img_max_height = height
-        self._img_height_accepted = True
+# Thread(target=self._vision_loop).start()
+         
+#raw_input("Place drone at set point; then press enter:\n")
+        self._img_set_point_accepted = True
+#self._img_set_point = self._img_pos.y
+        self._img_set_point = 480
 
-        raw_input("Press any key to begin Crazyflie initiation code.")
+        raw_input("Set-point is {0}; press any key to conintue.\n".format(self._img_set_point))
 
         """ Initialize and run the example with the specified link_uri """
 
@@ -112,7 +99,7 @@ class HoverExample:
         
         self._cf.open_link(link_uri)
 
-        raw_input("Acquiring altitude reading.  Press any key to accept\n")
+# raw_input("Acquiring altitude reading.  Press any key to accept\n")
         self._alt_accepted = True
 
         raw_input("Beginning hover.  Press any key to stop\n")
@@ -158,21 +145,31 @@ class HoverExample:
         print "Disconnected from %s" % link_uri
 
     def _vision_loop(self):
-        log = open(self._img_log_path, 'w', 0)
         while not self._exit:
-            img = self._cam.getImage()
-            
-            # image adjustments
-            if self._img_size:
-                img = img.resize(self._img_size[0], self._img_size[1])
+            self._vision_cycle(show=True)
 
-            # blob search
-            color = img - img.colorDistance(self._img_color)
-            blobs = color.findBlobs(-1, self._img_blob_min, self._img_blob_max)
-            
-            # blob draw
+    def _vision_cycle(self, show=False):
+# log = open(self._img_log_path, 'w', 0)
+# while not self._exit:
+        img = self._cam.getImage()
+        
+        # image adjustments
+        if self._img_size:
+            img = img.resize(self._img_size[0], self._img_size[1])
+        img = img.rotate90()
+
+        # blob search
+        color = img - img.colorDistance(self._img_color)
+        blobs = color.findBlobs(-1, self._img_blob_min, self._img_blob_max)
+        
+        # blob find
+        if blobs is not None:
+            self._img_pos = blobs[-1]
+            print blobs[-1]
+
+        # blob show
+        if show:
             if blobs is not None:
-                self._img_pos = blobs[-1]
                 roiLayer = SimpleCV.DrawingLayer((img.width, img.height))
                 for blob in blobs:
                     blob.draw(layer=roiLayer)
@@ -182,19 +179,14 @@ class HoverExample:
             img = img.applyLayers()
             img.show()
 
-            # height determination
-            if self._img_floor_accepted and\
-                self._img_ceiling_accepted and\
-                self._img_height_accepted:
-                dy = self._img_pos.y - self._img_floor_y
-                ypct = dy / (self._img_ceiling_y - self._img_floor_y)
-                self._img_height = ypct * self._img_max_height
-                log.write("{x},{y},{h}\n"\
-                   .format(x=self._img_pos.x,y=self._img_pos.y,h=self._img_height))
+        # dy is the desired recalibration
+        return self._img_pos.y - self._img_set_point
+# log.write("{y},{dy}\n".format(y=self._img_pos.y,dy=dy))
 
-        log.close()
+#log.close()
 
     def _hover_loop(self):
+        """
         # aquire asl_start over first 3 seconds -- 30 samples
         asl_start = 0
         asl_readings = 0
@@ -213,15 +205,24 @@ class HoverExample:
         print "Hover target = %s" % self._hover_target
         print "Target altitude = %s" % asl_target
         print "Flight time = %s" % self._flight_time
+        """
 
         # flight loop
         flight_time_start = time.time()
         control_time_last = 0
-        hover_thrust = 37300
-        corrective_thrust = 3000
-        while time.time() - flight_time_start < 10 and not self._exit:
-            if time.time() - control_time_last > 0.01: # control at most every 10ms
+        hover_thrust = 38000
+        corrective_thrust = 5000
+        dy_scale = 1.0/400.0 # 800 pixels tall
+        while time.time() - flight_time_start < 60 and not self._exit:
+            if time.time() - control_time_last > 0.1: # control at most every 10ms
                 control_time_last = time.time()
+
+                dy = self._vision_cycle()
+                thrust = hover_thrust + (dy * dy_scale * corrective_thrust)
+                print "dy=%s, thrust=%s" % (dy, thrust)
+# self._cf.commander.send_setpoint(0,0,0,thrust)
+                
+                """
                 asl_diff = asl_target - self._asl
 
                 # lift off speed
@@ -240,6 +241,7 @@ class HoverExample:
                 # upwards corrections seem fine
                 # drift down seems worse
                 # 
+                """
         print "Killing Thrust"
         self._cf.commander.send_setpoint(0,0,0,0)
         time.sleep(1)
@@ -277,8 +279,6 @@ if __name__ == '__main__':
     print "Crazyflies found:"
     for i in available:
         print i[0]
-
-    le = HoverExample(None)
 
     if len(available) > 0:
         le = HoverExample(available[0][0])
