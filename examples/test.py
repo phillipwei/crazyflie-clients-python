@@ -7,8 +7,8 @@ import time
 
 from SimpleCV import Camera, Color, JpegStreamCamera
 
-logging.basicConfig(level=logging.ERROR)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Hover")
 
 class Hover:
     """Uses vision tracking and PID-control to hover at a given altitude
@@ -18,6 +18,7 @@ class Hover:
     """
 
     def __init__(self):
+        logger.info("{name} init()".format(name=self.__class__.__name__))
         self.initControl()
         self.initCamera()
         self.initTracking()
@@ -47,7 +48,7 @@ class Hover:
                                                  .format(ip=camIp))
 
         self.camRes = (800,600)
-        logging.info("Camera resolution={res}".format(res=self.camRes))
+        logger.info("Camera resolution={res}".format(res=self.camRes))
 
     """ setup tracking """
     def initTracking(self):
@@ -70,8 +71,10 @@ class Hover:
                 break
 
             # adjust image
+            '''
             img = img.resize(self.camRes[0], self.camRes[1])
             img = img.rotate90()
+            '''
 
             # blob search
             colorDiff = img - img.colorDistance(self.trackingColor)
