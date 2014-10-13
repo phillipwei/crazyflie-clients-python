@@ -1,9 +1,12 @@
 #!/usr/bin/python
 
+from datetime import datetime
+import inspect
 import logging
 import sys
 import threading
-import time
+from time import sleep
+from Queue import Queue
 
 from SimpleCV import Camera, Color, DrawingLayer, JpegStreamCamera
 
@@ -40,6 +43,7 @@ class Hover:
         self.initControl()
         self.initCamera()
         self.initTracking()
+        self.initHover()
 
     def initControl(self):
         """Setup control-flow variables"""
@@ -75,11 +79,14 @@ class Hover:
         self.trackingBlobMax = 5000
         self.x = -1
         self.y = -1
+        self.trackingFrameQ = Queue()
         logger.info("Tracking color={color}; blobMin={min}; blobMax={max}"
                     .format(color=self.trackingColor,
                             min=self.trackingBlobMin,
                             max=self.trackingBlobMax))
-
+    def initHover(self):
+        self.hoverFrameQ = Queue()
+        
     def visionLoop(self):
         while not self.exit:
             # acquire image
@@ -123,10 +130,39 @@ class Hover:
             
             img.show()
 
-            logger.debug("y = {y}".format(y=self.y))
+            # fps
+            now = datetime.utcnow()
+            self.trackingFrameQ.put(now)
+            if self.trackingFrameQ.qsize() < 30:
+                fps = 0.0
+            else:
+                fps = 30.0/(now - self.trackingFrameQ.get()).total_seconds()
+
+            # logging
+            logger.debug("{func} ({x},{y}) {fps:5.2f}"
+                         .format(func=inspect.stack()[0][3],
+                                 x=self.x, y=self.y, fps=fps))
+
+    def hoverLoop(self):
+        while not self.exit:
+            sleep(0.01)
+            
+            # fps
+            now = datetime.utcnow()
+            self.hoverFrameQ.put(now)
+            if self.hoverFrameQ.qsize() < 30:
+                fps = 0.0
+            else:
+                fps = 30.0/(now - self.hoverFrameQ.get()).total_seconds()
+
+            # logging
+            logger.debug("{func} ({x},{y}) {fps:5.2f}"
+                         .format(func=inspect.stack()[0][3],
+                                 x=self.x, y=self.y, fps=fps)) 
 
     def start(self):
         threading.Thread(target=self.visionLoop).start()
+        threading.Thread(target=self.hoverLoop).start()
         raw_input("Press any key to stop")
         self.exit = True
 
