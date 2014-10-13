@@ -1,55 +1,64 @@
 #!/usr/bin/python
 
-"""
-simple program to test that all the wiring is correct;
-* run camera capture in it's own thread; update altitude
-* run hover loop in it's own thread; output altitude
-"""
+import logging
+import sys
+import threading
+import time
 
-""" core imports """
-import logging, sys, time, threading
+from SimpleCV import Camera, Color, JpegStreamCamera
 
-""" library imports """
-import SimpleCV
-
-""" setup logging; also define logger for this file """
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-class Hover:    
+class Hover:
+    """Uses vision tracking and PID-control to hover at a given altitude
+
+    1. Run camera capture in it's own thread; update altitude
+    2. Run hover loop in it's own thread; output altitude
+    """
+
     def __init__(self):
         self.initControl()
         self.initCamera()
         self.initTracking()
 
-    """ setup control variables """
     def initControl(self):
+        """Setup control-flow variables"""
         self.exit = False
 
-    """ setup camera """
     def initCamera(self):
-        # todo: should keep track of last entry and enter should do that, not webcam
-        camIp = raw_input("Specify camera; enter for webcam, or ip of network camera:\n")
+        """Setup camera variables
+
+        Will prompt the user for feedback.  Capable of loading webcam or an
+        ip-camera streaming JPEG
+        """
+        # TODO: Track last camera mode; use 'Enter' to repeat that
+        camIp = raw_input("Specify camera; enter for webcam, " +
+                          "or ip of network camera:\n")
         logger.info("Camera specified as '{camIp}'".format(camIp=camIp))
 
         if camIp is '':
-            self.cam = SimpleCV.Camera()
+            self.cam = Camera()
         elif '.' not in camIp:
-            self.cam = SimpleCV.JpegStreamCamera("http://192.168.1." + camIp + ":8080/video")
+            self.cam = JpegStreamCamera("http://192.168.1.{ip}:8080/video"
+                                        .format(ip=camIp))
         else:
-            self.cam = SimpleCV.JpegStreamCamera("http://" + camIp + ":8080/video")
+            self.cam = JpegStreamCamera("http://{ip}:8080/video"
+                                                 .format(ip=camIp))
 
         self.camRes = (800,600)
         logging.info("Camera resolution={res}".format(res=self.camRes))
 
     """ setup tracking """
     def initTracking(self):
-        self.trackingColor = SimpleCV.Color.RED
+        self.trackingColor = Color.RED
         self.trackingBlobMin = 10
         self.trackingBlobMax = 5000
         self.y = -1
-        logger.info("Tracking color={trackingColor}; blobMin={blobMin}; blobMax={blobMax}"\
-                .format(trackingColor=self.trackingColor, blobMin=self.trackingBlobMin, blobMax=self.trackingBlobMax))
+        logger.info("Tracking color={color}; blobMin={min}; blobMax={max}"
+                    .format(color=self.trackingColor,
+                            min=self.trackingBlobMin,
+                            max=self.trackingBlobMax))
 
     def visionLoop(self):
         while not self.exit:
@@ -66,7 +75,8 @@ class Hover:
 
             # blob search
             colorDiff = img - img.colorDistance(self.trackingColor)
-            blobs = colorDiff.findBlobs(-1, self.trackingBlobMin, self.trackingBlobMax)
+            blobs = colorDiff.findBlobs(-1, self.trackingBlobMin, 
+                                        self.trackingBlobMax)
             
             # blob find
             if blobs is not None:
@@ -77,12 +87,13 @@ class Hover:
             """
             if show:
                 if blobs is not None:
-                    roiLayer = SimpleCV.DrawingLayer((img.width, img.height))
+                    roiLayer = DrawingLayer((img.width, img.height))
                     for blob in blobs:
                         blob.draw(layer=roiLayer)
-                    roiLayer.circle((self._img_pos.x,self._img_pos.y), 50, SimpleCV.Color.RED, 2)
+                    roiLayer.circle((self._img_pos.x,self._img_pos.y), 50, 
+                                    Color.RED, 2)
                     img.addDrawingLayer(roiLayer)
-                    blobs.draw(SimpleCV.Color.GREEN, 1)
+                    blobs.draw(Color.GREEN, 1)
                 img = img.applyLayers()
                 img.show()
             """
