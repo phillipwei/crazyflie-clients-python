@@ -5,10 +5,29 @@ import sys
 import threading
 import time
 
-from SimpleCV import Camera, Color, JpegStreamCamera
+from SimpleCV import Camera, Color, DrawingLayer, JpegStreamCamera
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Hover")
+logging.basicConfig(level=logging.DEBUG)
+
+""" File handler for everything """
+fh = logging.FileHandler('log')
+fh.setLevel(logging.DEBUG)
+
+""" Console handler for info+ """
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+
+""" Format w/ timestamp """
+formatter = logging.Formatter("%(asctime)s::%(name)s::%(levelname)s::" +
+                              "%(message)s")
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+
+""" Wire up logging """
+logger.addHandler(ch)
+logger.addHandler(fh)
+>>>>>>> origin/master
 
 class Hover:
     """Uses vision tracking and PID-control to hover at a given altitude
@@ -55,6 +74,7 @@ class Hover:
         self.trackingColor = Color.RED
         self.trackingBlobMin = 10
         self.trackingBlobMax = 5000
+        self.x = -1
         self.y = -1
         logger.info("Tracking color={color}; blobMin={min}; blobMax={max}"
                     .format(color=self.trackingColor,
@@ -83,23 +103,25 @@ class Hover:
             
             # blob find
             if blobs is not None:
-                self.y = blobs[-1]
-                print blobs[-1]
+                self.x = blobs[-1].x
+                self.y = blobs[-1].y
 
             # blob show
-            """
-            if show:
-                if blobs is not None:
-                    roiLayer = DrawingLayer((img.width, img.height))
-                    for blob in blobs:
-                        blob.draw(layer=roiLayer)
-                    roiLayer.circle((self._img_pos.x,self._img_pos.y), 50, 
-                                    Color.RED, 2)
-                    img.addDrawingLayer(roiLayer)
-                    blobs.draw(Color.GREEN, 1)
+            if blobs is not None:
+                # roi = region of interest
+                roiLayer = DrawingLayer((img.width, img.height))
+                
+                # draw all blobs
+                for blob in blobs:
+                    blob.draw(layer=roiLayer)
+                
+                # draw a circle around the main blob
+                roiLayer.circle((self.x,self.y), 50, Color.RED, 2)
+
+                # apply roi to img
+                img.addDrawingLayer(roiLayer)
                 img = img.applyLayers()
-                img.show()
-            """
+            
             img.show()
 
             logger.debug("y = {y}".format(y=self.y))
