@@ -84,11 +84,15 @@ class Hover:
         self.trackingBlobMax = 5000
         self.x = -1
         self.y = -1
-        self.trackingFrameQ = Queue()
-        logger.info("Tracking color={color}; blobMin={min}; blobMax={max}"
+        self.target = (300,400)
+        logger.info(("Tracking color={color}; min={min}; max={max}; " +
+                     "target={target}")
                     .format(color=self.trackingColor,
                             min=self.trackingBlobMin,
-                            max=self.trackingBlobMax))
+                            max=self.trackingBlobMax,
+                            target=self.target))
+        self.trackingFrameQ = Queue()
+
     def initHover(self):
         self.hoverFrameQ = Queue()
         
@@ -185,7 +189,7 @@ class Hover:
                 fps = 30.0/(now - self.trackingFrameQ.get()).total_seconds()
 
             # logging
-            logger.debug("{func:>12} ({x},{y}) {fps:5.2f}"
+            logger.debug("{func} ({x},{y}) {fps:5.2f}"
                          .format(func=inspect.stack()[0][3],
                                  x=self.x, y=self.y, fps=fps))
         # loop has ened
@@ -193,8 +197,19 @@ class Hover:
 
     def hoverLoop(self):
         while not self.exit:
+            # hover throttled to camera frame rate
             sleep(1.0/30.0)
-            
+
+            # calculate the adjustment throttle
+            dy = self.y - self.target[1]
+            dyScaled = dy/400.0
+            correctiveThrust = 5000
+            hoverThrust = 37000
+            thrust = hoverThrust + (dyScaled * correctiveThrust)
+
+            # set the throttle
+            self.setThrust(thrust)
+
             # fps
             now = datetime.utcnow()
             self.hoverFrameQ.put(now)
@@ -204,14 +219,21 @@ class Hover:
                 fps = 30.0/(now - self.hoverFrameQ.get()).total_seconds()
 
             # logging
-            '''
-            logger.debug("{func:>12} ({x},{y}) {fps:5.2f}"
+            logger.debug(("{func} dy={dy}, dy%={dyScaled}, thrust={thrust} " +
+                          "[{fps:5.2f}]")
                          .format(func=inspect.stack()[0][3],
-                                 x=self.x, y=self.y, fps=fps)) 
-            '''
+                                 dy=dy, dyScaled=dyScaled, thrust=thrust,
+                                 fps=fps)) 
+        
         
         # loop has ened
         logger.debug("{func} stopped.".format(func=inspect.stack()[0][3]))
+
+    def setThrust(self, thrust):
+        """ sets thrust - but if control has exited, will kill thrust """
+        if self.exit:
+            thrust = 0
+        self.cf.commander.send_setpoint(0,0,0, thrust)
 
     def cfOpenLink(self):
         self.cf.open_link(self.cfUri)
@@ -233,6 +255,9 @@ class Hover:
     def stop(self):
         # kill our loops
         self.exit = True
+
+        # explicitly kill thrust
+        self.setThrust(0)
 
         # kill crazyflie
         if self.cf and self.cfConnected:
