@@ -3,6 +3,7 @@
 from datetime import datetime
 import inspect
 import logging
+import shelve
 import sys
 import threading
 from time import sleep
@@ -58,30 +59,48 @@ class Hover:
         """Setup camera variables
 
         Will prompt the user for feedback.  Capable of loading webcam or an
-        ip-camera streaming JPEG
+        ip-camera streaming JPEG.  Uses shelve to remember last entered
+        value
         """
-        # TODO: Track last camera mode; use 'Enter' to repeat that
-        camIp = raw_input("Specify camera; enter for webcam, " +
-                          "or ip of network camera:\n")
-        logger.info("Camera specified as '{camIp}'".format(camIp=camIp))
+        
+        # fetch settings
+        settings = shelve.open('/tmp/hover.settings')
+        lastCamIp = settings.get('camIp')
 
-        if camIp is '':
+        # prompt for input
+        if lastCamIp:
+            camIp = raw_input("Specify camera: 'cam' for webcam, " +
+                              "an ip of network camera or <ENTER> for the " +
+                              "previous value of '{lastCamIp}':\n"
+                              .format(lastCamIp=lastCamIp))
+        else:
+            camIp = raw_input("Specify camera: 'cam' for webcam or " +
+                              "an ip of network camera")
+
+        logger.info("Camera specified as '{camIp}'".format(camIp=camIp))
+        
+        # save settings
+        settings['camIp'] = camIp
+
+        # setup camera
+        if camIp == "cam":
             self.cam = Camera()
         elif '.' not in camIp:
             self.cam = JpegStreamCamera("http://192.168.1.{ip}:8080/video"
                                         .format(ip=camIp))
         else:
             self.cam = JpegStreamCamera("http://{ip}:8080/video"
-                                                 .format(ip=camIp))
+                                        .format(ip=camIp))
 
+        # additional values -- for now, just hard coded
         self.camRes = (800,600)
         logger.info("Camera resolution={res}".format(res=self.camRes))
 
     """ setup tracking """
     def initTracking(self):
-        self.trackingColor = Color.RED
-        self.trackingBlobMin = 10
-        self.trackingBlobMax = 5000
+        self.trackingColor = Color.BLUE
+        self.trackingBlobMin = 5
+        self.trackingBlobMax = 1000
         self.x = -1
         self.y = -1
         self.target = (300,400)
@@ -94,8 +113,9 @@ class Hover:
         self.trackingFrameQ = Queue()
 
     def initHover(self):
-        self.hoverFrameQ = Queue()
-        
+        self.hoverFrames = []
+        self.eSum = 0
+
     def initCF(self):
         self.cfConnected = False
         self.cf = None
@@ -151,12 +171,17 @@ class Hover:
             img = img.resize(self.camRes[0], self.camRes[1])
             img = img.rotate90()
             '''
+            img = img.rotate90()
 
             # blob search
             colorDiff = img - img.colorDistance(self.trackingColor)
             blobs = colorDiff.findBlobs(-1, self.trackingBlobMin, 
                                         self.trackingBlobMax)
-            
+            '''
+            blobs = img.findBlobs((255,60,60), self.trackingBlobMin,
+                                  self.trackingBlobMax)
+            '''
+
             # blob find
             if blobs is not None:
                 self.x = blobs[-1].x
@@ -200,29 +225,40 @@ class Hover:
             # hover throttled to camera frame rate
             sleep(1.0/30.0)
 
-            # calculate the adjustment throttle
-            dy = self.y - self.target[1]
-            dyScaled = dy/400.0
-            correctiveThrust = 5000
+            # fps
+            now = datetime.utcnow()
+            self.hoverFrames.append(now)
+            if len(self.hoverFrames) < 30:
+                fps = 0.0
+            else:
+                fps = 30.0/(now - self.hoverFrames[-30]).total_seconds()
+            
+            # pid variables
+            kp = (3000.0/400.0)
+            ki = 0.18
+
+            # determine immediate error e
+            e = self.y - self.target[1]
+            
+            # determine accumulated errors eSum
+            if len(self.hoverFrames) > 1:
+                dt = (now - self.hoverFrames[-2]).total_seconds()
+            else:
+                dt = 0
+            self.eSum = self.eSum + e * dt
+
+            # calculate thrust
             hoverThrust = 37000
-            thrust = hoverThrust + (dyScaled * correctiveThrust)
+            thrust = hoverThrust + (kp * e) + (ki * self.eSum)
 
             # set the throttle
             self.setThrust(thrust)
 
-            # fps
-            now = datetime.utcnow()
-            self.hoverFrameQ.put(now)
-            if self.hoverFrameQ.qsize() < 30:
-                fps = 0.0
-            else:
-                fps = 30.0/(now - self.hoverFrameQ.get()).total_seconds()
-
             # logging
-            logger.debug(("{func} dy={dy}, dy%={dyScaled}, thrust={thrust} " +
-                          "[{fps:5.2f}]")
+            logger.debug(("{func} e={e}, dt={dt:0.4f}, eSum={eSum:0.4f}, " +
+                          "thrust={thrust},  [{fps:5.2f}]")
                          .format(func=inspect.stack()[0][3],
-                                 dy=dy, dyScaled=dyScaled, thrust=thrust,
+                                 e=e, dt=dt, eSum=self.eSum, thrust=thrust,
                                  fps=fps)) 
         
         
@@ -233,11 +269,14 @@ class Hover:
         """ sets thrust - but if control has exited, will kill thrust """
         if self.exit:
             thrust = 0
-        self.cf.commander.send_setpoint(0,0,0, thrust)
+        
+        if self.cf is not None:
+            self.cf.commander.send_setpoint(0,0,0, thrust)
 
     def cfOpenLink(self):
-        self.cf.open_link(self.cfUri)
-        logger.info("Linked opened to {uri}".format(uri=self.cfUri))
+        if self.cf is not None:
+            self.cf.open_link(self.cfUri)
+            logger.info("Linked opened to {uri}".format(uri=self.cfUri))
 
     def start(self):
         logger.info("Starting VisionLoop")
@@ -249,7 +288,7 @@ class Hover:
         logger.info("Opening Crazyflie link")
         self.cfOpenLink()
 
-        raw_input("Press any key to stop")
+        raw_input("Press enter to stop")
         self.stop()
         
     def stop(self):
