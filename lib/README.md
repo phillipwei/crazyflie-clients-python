@@ -22,3 +22,7 @@ laptops), but are open to using other sensors if they make sense, e.g:
 Todo
 ====
 * Better vision tracking -- current SimpleCV color tracking is pretty noisy
+    * Consider using Flow
+    * Consider better blobs to object
+    * Edge detection
+    * Lock on; Kalman filters
