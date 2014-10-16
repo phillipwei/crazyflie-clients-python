@@ -45,11 +45,13 @@ class Hover:
 
     def __init__(self):
         logger.info("{name} init()".format(name=self.__class__.__name__))
+        self.settings = shelve.open('/tmp/hover.settings')
         self.initControl()
         self.initCamera()
         self.initTracking()
         self.initHover()
         self.initCF()
+        self.settings.close()
 
     def initControl(self):
         """Setup control-flow variables"""
@@ -63,42 +65,99 @@ class Hover:
         value
         """
         
-        # fetch settings
-        settings = shelve.open('/tmp/hover.settings')
-        lastCamIp = settings.get('camIp')
+        # get settings
+        lastCamUri = self.settings.get('camUri')
+        lastCamRotate = self.settings.get('camRotate')
 
-        # prompt for input
-        if lastCamIp:
-            camIp = raw_input("Specify camera: 'cam' for webcam, " +
+        # prompt for camUri, camRotate
+        if lastCamUri:
+            _input = raw_input("Specify camera: 'cam' for webcam, " +
                               "an ip of network camera or <ENTER> for the " +
-                              "previous value of '{lastCamIp}':\n"
-                              .format(lastCamIp=lastCamIp))
+                              "previous value of '{lastCamUri}':\n"
+                              .format(lastCamUri=lastCamUri))
+            if _input:
+                self.camUri = lastCamUri
+            else:
+                self.camUri = _input
         else:
-            camIp = raw_input("Specify camera: 'cam' for webcam or " +
-                              "an ip of network camera")
+            _input = raw_input("Specify camera: 'cam'/<ENTER> for webcam or " +
+                                "an ip of network camera:\n")
+            if _input:
+                self.camUri = _input
+            else:
+                self.camUri = 'cam'
+        
+        logger.info("CamUri = '{camUri}'".format(camUri=self.camUri))
+        
+        if lastCamRotate:
+            _input = raw_input("Specify camera rotation or <ENTER> for the " +
+                               "previous value of '{lastCamRotate}':\n"
+                               .format(lastCamRotate=lastCamRotate))
+            if _input:
+                self.camRotate = int(_input)
+            else:
+                self.camRotate = lastCamRotate
+        else:
+            _input = raw_input("Specify camera rotation or <ENTER> for " +
+                               "no rotation':\n")
+            if _input:
+                self.camRotate = int(_input)
+            else:
+                self.camRotate = 0
 
-        logger.info("Camera specified as '{camIp}'".format(camIp=camIp))
+        logger.info("CamRotate = '{camRotate}'"\
+                    .format(camRotate=self.camRotate))
         
         # save settings
-        settings['camIp'] = camIp
+        self.settings['camUri'] = self.camUri
+        self.settings['camRotate'] = self.camRotate
 
         # setup camera
-        if camIp == "cam":
+        if self.camUri == "cam":
             self.cam = Camera()
-        elif '.' not in camIp:
+        elif '.' not in self.camUri:
             self.cam = JpegStreamCamera("http://192.168.1.{ip}:8080/video"
-                                        .format(ip=camIp))
+                                        .format(ip=camUri))
         else:
             self.cam = JpegStreamCamera("http://{ip}:8080/video"
-                                        .format(ip=camIp))
+                                        .format(ip=camUri))
 
         # additional values -- for now, just hard coded
         self.camRes = (800,600)
         logger.info("Camera resolution={res}".format(res=self.camRes))
 
-    """ setup tracking """
     def initTracking(self):
-        self.trackingColor = Color.BLUE
+        """Setup tracking variables
+        
+        Will prompt the user for tracking variables.  Uses shelve to remember
+        last entered value
+        """
+
+        # get last values
+        lastTrackingColor = self.settings.get('trackingColor')
+
+        # prompt for override
+        if lastTrackingColor:
+            _input = raw_input("Specify tracking color as (R,G,B)" +
+                               "or <ENTER> for previous value " +
+                               "{lastTrackingColor}:\n"
+                               .format(lastTrackingColor=lastTrackingColor))
+            if _input:
+                self.trackingColor = make_tuple(_input)
+            else:
+                self.trackingColor = lastTrackingColor
+        else:
+            _input = raw_input("Specify tracking color as (R,G,B)" +
+                               "or <ENTER> for default of BLUE:\n")
+            if _input:
+                self.trackingColor = make_tuple(_input)
+            else:
+                self.trackingColor = Color.BLUE
+
+        # save settings
+        self.settings['trackingColor'] = self.trackingColor
+
+        # additional values
         self.trackingBlobMin = 5
         self.trackingBlobMax = 1000
         self.x = -1
@@ -167,11 +226,12 @@ class Hover:
                 break
 
             # adjust image
+            if self.camRotate != 0:
+                img.rotate(self.camrotate)
             '''
             img = img.resize(self.camRes[0], self.camRes[1])
             img = img.rotate90()
             '''
-            img = img.rotate90()
 
             # blob search
             colorDiff = img - img.colorDistance(self.trackingColor)
