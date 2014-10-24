@@ -75,14 +75,14 @@ class Hover:
                               "an ip of network camera or <ENTER> for the " +
                               "previous value of '{lastCamUri}':\n"
                               .format(lastCamUri=lastCamUri))
-            if _input:
+            if not _input:
                 self.camUri = lastCamUri
             else:
                 self.camUri = _input
         else:
             _input = raw_input("Specify camera: 'cam'/<ENTER> for webcam or " +
                                 "an ip of network camera:\n")
-            if _input:
+            if not _input:
                 self.camUri = _input
             else:
                 self.camUri = 'cam'
@@ -117,10 +117,10 @@ class Hover:
             self.cam = Camera()
         elif '.' not in self.camUri:
             self.cam = JpegStreamCamera("http://192.168.1.{ip}:8080/video"
-                                        .format(ip=camUri))
+                                        .format(ip=self.camUri))
         else:
             self.cam = JpegStreamCamera("http://{ip}:8080/video"
-                                        .format(ip=camUri))
+                                        .format(ip=self.camUri))
 
         # additional values -- for now, just hard coded
         self.camRes = (800,600)
